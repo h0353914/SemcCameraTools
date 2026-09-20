@@ -35,8 +35,16 @@ def _find_signing_resources() -> tuple[Path, Path, Path, Optional[Path]]:
     if not signapk_jar.exists():
         raise FileNotFoundError(f"signapk.jar not found: {signapk_jar}")
 
-    pub_key = _abs_from_tool("/home/h/lineageos/build/target/product/security/platform.x509.pem")
-    priv_key = _abs_from_tool("/home/h/lineageos/build/target/product/security/platform.pk8")
+    # ROM 若是用自訂 release key 簽的（~/.android-certs），APK 就必須跟著用同一把。
+    # 用樹內的 AOSP testkey 簽會讓 seinfo 不等於 platform，vendor_seapp_contexts 的
+    # `seinfo=platform ... domain=semccamera_app` 比對不到，app 會掉進 priv_app domain，
+    # 接著被 SELinux 擋掉 cacaoserver_service，相機開起來就是「未知的錯誤」。
+    release_certs = Path.home() / ".android-certs"
+    pub_key = release_certs / "platform.x509.pem"
+    priv_key = release_certs / "platform.pk8"
+    if not pub_key.exists() or not priv_key.exists():
+        pub_key = _abs_from_tool("/home/h/lineageos/build/target/product/security/platform.x509.pem")
+        priv_key = _abs_from_tool("/home/h/lineageos/build/target/product/security/platform.pk8")
     if not pub_key.exists() or not priv_key.exists():
         raise FileNotFoundError(
             f"Platform keys not found. Expected:\n  {pub_key}\n  {priv_key}"
