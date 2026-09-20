@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-import argparse
-from dataclasses import dataclass
-from datetime import datetime
 import logging
-from pathlib import Path
 import re
 import sys
 import tempfile
 import threading
 import time
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]  # /home/h/lineageos/device/sony/SemcCameraUI
 TEST_CAMERA_DIR = Path(__file__).resolve().parent  # ./test_camera
@@ -17,14 +16,11 @@ TEST_CAMERA_DIR = Path(__file__).resolve().parent  # ./test_camera
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(TEST_CAMERA_DIR))
 
-import uiagent_client as uiagent_client  # noqa: E402
-import uiagent_instrumentation_client as uiagent_instrumentation_client  # noqa: E402
-from key import ClickTarget, load_click_targets  # noqa: E402
-from uiagent_instrumentation_client import UiAgentInstrumentationClient  # noqa: E402
-from parse_args import parse_args  # noqa: E402
-from tools_Common.adb import Adb  # noqa: E402
-from tools_Common.push_common import push  # noqa: E402
-from uiagent_client import (  # noqa: E402
+import uiagent_client as uiagent_client
+import uiagent_instrumentation_client as uiagent_instrumentation_client
+from key import ClickTarget, load_click_targets
+from parse_args import parse_args
+from uiagent_client import (
     Field,
     WaitTargetNotFoundError,
     click_child_rid,
@@ -36,7 +32,10 @@ from uiagent_client import (  # noqa: E402
     wait_exists,
     wait_then_click,
 )
+from uiagent_instrumentation_client import UiAgentInstrumentationClient
 
+from tools_Common.adb import Adb
+from tools_Common.push_common import push
 
 SAVE_TIMEOUT = 10000
 TIMEOUT = 5000
@@ -160,7 +159,9 @@ class Ui:
 class TestCase:
     key: str
     func: callable
-    name: str
+    test_name: str
+    mode: str
+    param: str
     alias: str
     check_saved: bool
 
@@ -236,14 +237,14 @@ class TestContext:  # 負責管理 adb、logger、ui、camera controller 等共�
         self.camera: CameraController = CameraController(
             self.resources.ui, self.resources.logger, self.adb
         )
-        self.state: TestState = TestState(
-            self.adb, self.resources.logger
-        )  # 建立測試狀態實例
+        # 建立測試狀態實例
+        self.state: TestState = TestState(self.adb, self.resources.logger)
 
 
 class TestRunner:  # 負責管理測試流程，包含輪數、目前測試、開始/結束測試等
     def __init__(self, ctx: TestContext):
         self.ctx = ctx
+        self.t_start = None
         self.round = 0  # 目前測試的輪數
         self.test: TestCase | None = None  # 目前測試的 TestCase
 
@@ -273,6 +274,10 @@ class TestRunner:  # 負責管理測試流程，包含輪數、目前測試、�
     def start_test(self, test: TestCase):
         """開始下一個測試"""
         self.test = test
+        self.t_start = time.monotonic()  # 記錄開始時間
+        self.ctx.camera.check_camera_ui_ready(timeout_ms=LL_TIMEOUT)  # 確認 UI 就緒
+        self.ctx.resources.logger.info("相機 UI 已準備好")
+        self.ctx.camera.click_camera_mode(mode=test.mode, param=test.param)
         self.ctx.resources.logger.info(f"開始{self.test.key}測試")
         self.ctx.state.reset_baseline()
 
@@ -283,7 +288,7 @@ class TestRunner:  # 負責管理測試流程，包含輪數、目前測試、�
     def stop(self):
         self.ctx.resources.adb_log.stop()  # 停止所有 adb log 捕獲
         self.ctx.resources.logger.info(
-            f"測試結束，adb log 和診斷資料已儲存到 {self.ctx.session.session_dir}"
+            f"測試結束，log已儲存到 {self.ctx.session.session_dir}"
         )
 
 
@@ -636,11 +641,9 @@ def check_all(context, *, timeout_ms=TIMEOUT, interval_ms=200):
 # ------------------------------------------------------------
 # 測試流程函式
 # ------------------------------------------------------------
-def test_settings_base(context: TestContext, mode, param, settings_check) -> bool:
+def test_settings_base(context: TestContext, settings_check) -> bool:
     ui = context.resources.ui
     logger = context.resources.logger
-    logger.info(f"測試{param}設定...")
-    context.camera.click_camera_mode(mode=mode, param=param)
 
     ui.click_then_appear("B_設定", "ANCHOR_設定選單")
 
@@ -667,10 +670,6 @@ def test_photo(context) -> None:
     ui = context.resources.ui
     logger = context.resources.logger
 
-    logger.info("測試拍照模式...")
-    logger.info("切換到拍照模式...")
-    context.camera.click_camera_mode(mode="main", param="photo")  # 切到拍照模式
-
     logger.info("按下快門...")
     ui.click_then_disappear("B_拍照鍵", "B_模式通用")
     ui.wait_exists("B_模式通用", timeout_ms=SAVE_TIMEOUT)  # 等待快門鍵重新出現
@@ -680,10 +679,6 @@ def test_video(context) -> None:
     """錄影測試流程"""
     ui = context.resources.ui
     logger = context.resources.logger
-
-    logger.info("測試錄影模式...")
-    logger.info("切換到錄影模式...")
-    context.camera.click_camera_mode(mode="main", param="video")  # 切到錄影模式
 
     logger.info("按下快門...")
     ui.click_then_appear("B_錄影鍵", "B_停止錄影")
@@ -721,9 +716,7 @@ def test_photo_settings(context) -> bool:
         ("失真校正", "S_失真校正"),
         *GENERAL_SETTINGS_CHECK,
     ]
-    return test_settings_base(
-        context, mode="main", param="photo", settings_check=settings_check
-    )
+    return test_settings_base(context, settings_check=settings_check)
 
 
 def test_video_settings(context) -> bool:
@@ -738,21 +731,12 @@ def test_video_settings(context) -> bool:
         ("檔案格式(4K)", "S_檔案格式(4K)"),
         *GENERAL_SETTINGS_CHECK,
     ]
-    return test_settings_base(
-        context, mode="main", param="video", settings_check=settings_check
-    )
-
-
-def test_slow_base(context: TestContext, param) -> bool:
-    """慢動作測試流程"""
-    context.resources.logger.info(f"切到慢動作({param})...")
-    context.camera.click_camera_mode(mode="slow", param=param)
+    return test_settings_base(context, settings_check=settings_check)
 
 
 def test_slow_single(context) -> bool:
     """慢動作測試流程"""
     ui = context.resources.ui
-    test_slow_base(context, param="single")
 
     context.resources.logger.info("按下快門...")
     ui.click_then_disappear("B_快門通用", "B_模式通用")
@@ -763,7 +747,6 @@ def test_slow_960(context) -> bool:
     """慢動作測試流程"""
     ui = context.resources.ui
     logger = context.resources.logger
-    test_slow_base(context, param="960")
 
     logger.info("按下快門...")
     ui.click_then_appear("B_快門通用", "B_960停止錄影")
@@ -787,7 +770,6 @@ def test_slow_120(context) -> bool:
     """慢動作測試流程"""
     ui = context.resources.ui
     logger = context.resources.logger
-    test_slow_base(context, param="120")
 
     logger.info("按下快門...")
     ui.click_then_appear("B_快門通用", "B_停止錄影")
@@ -1045,49 +1027,63 @@ TESTS = [
     TestCase(
         key="photo",
         func=test_photo,
-        name="拍照",
+        test_name="拍照",
+        mode="main",
+        param="photo",
         check_saved=True,
         alias="p",
     ),
     TestCase(
         key="photo_settings",
         func=test_photo_settings,
-        name="拍照設定選項",
+        test_name="拍照選項",
+        mode="main",
+        param="photo",
         check_saved=False,
         alias="st",
     ),
     TestCase(
         key="video",
         func=test_video,
-        name="錄影",
+        test_name="錄影",
+        mode="main",
+        param="video",
         check_saved=True,
         alias="v",
     ),
     TestCase(
         key="video_settings",
         func=test_video_settings,
-        name="錄影設定選項",
+        test_name="錄影選項",
+        mode="main",
+        param="video",
         check_saved=False,
         alias="vst",
     ),
     TestCase(
         key="slow_single",
         func=test_slow_single,
-        name="超級慢動作(單拍)",
+        test_name="超級慢動作(單拍)",
+        mode="slow",
+        param="single",
         check_saved=True,
         alias="so",
     ),
     TestCase(
         key="slow_960",
         func=test_slow_960,
-        name="超級慢動作",
+        test_name="超級慢動作",
+        mode="slow",
+        param="960",
         check_saved=True,
         alias="s960",
     ),
     TestCase(
         key="slow_120",
         func=test_slow_120,
-        name="慢動作",
+        test_name="慢動作",
+        mode="slow",
+        param="120",
         check_saved=True,
         alias="s120",
     ),
@@ -1131,28 +1127,26 @@ def resolve_tests(tests, args_mods):
 
 
 def run_camera_test_flow(
-    context: TestContext,
+    runner: TestRunner,
     args,
     tests,
     max_retry=5,
 ) -> None:
+    context = runner.ctx
 
     def try_mode_attempt(mode, delay=0) -> bool:
         """執行一次 mode 測試嘗試。成功回傳 True；判定為過熱、可重試回傳 False；
         其他失敗直接 raise RuntimeError。"""
         label = "儲存" if mode.check_saved else ""  # 有check_saved就=儲存
         try:
-            t_start = time.monotonic()  # 記錄開始時間
-            camera.check_camera_ui_ready(timeout_ms=LL_TIMEOUT)  # 確認 UI 就緒
-
-            logger.info("相機 UI 已準備好")
+            runner.start_test(test=mode)
 
             test_ok = mode.func(context)
             if mode.check_saved:  # photo_settings 模式不測試儲存
                 result = state.wait_for_new_file()
             else:
                 result = test_ok
-            elapsed = time.monotonic() - t_start  # 計算耗時
+            elapsed = time.monotonic() - runner.t_start  # 計算耗時
 
             if result:
                 logger.info(f"{label}結果: ✅ (耗時 {elapsed:.2f}s)")
@@ -1171,7 +1165,7 @@ def run_camera_test_flow(
                 dump_ui_tree(
                     context, context.session.session_dir
                 )  # 將 UI 列表輸出到 txt，方便分析
-                raise RuntimeError(f"模式 {mode.name} 測試失敗") from e
+                raise RuntimeError(f"模式 {mode.test_name} 測試失敗") from e
 
     ui: Ui = context.resources.ui
     camera: CameraController = context.camera
@@ -1187,8 +1181,8 @@ def run_camera_test_flow(
 
     camera.launch_camera()  # 啟動相機
 
-    # if args.clear_data:
-    #     handle_permission_dialog(context)  # 處理權限彈窗
+    if args.clear_data:
+        handle_permission_dialog(context)  # 處理權限彈窗
 
     test_list = resolve_tests(tests, args.mode)
 
@@ -1198,7 +1192,7 @@ def run_camera_test_flow(
     while idx < len(test_list):
         mode = test_list[idx]
 
-        logger.info(f"========== {mode.name} 第 {n}/{max_retry} 次 ==========")
+        logger.info(f"========== {mode.test_name} 第 {n}/{max_retry} 次 ==========")
 
         if try_mode_attempt(mode, 60 + 80 * (n - 1)):
             idx += 1  # 移動到下一個測試項目
@@ -1214,13 +1208,13 @@ def run_camera_test_flow(
 
             n = n + 1  # 增加重試次數
             if n > max_retry:
-                raise RuntimeError(f"模式 {mode.name} 測試失敗")
+                raise RuntimeError(f"模式 {mode.test_name} 測試失敗")
 
-    context.resources.logger.info(f"========== 結束 {mode.name} 測試 ==========")
+    context.resources.logger.info(f"========== 結束 {mode.test_name} 測試 ==========")
 
 
 def main() -> None:
-    args = parse_args(TESTS)
+    args = parse_args(tests=TESTS)
     config = TestConfig(rounds=args.count, interval=args.interval)
 
     adb = Adb(serial=args.device)
@@ -1249,7 +1243,7 @@ def main() -> None:
 
             success = False
             try:
-                run_camera_test_flow(context, args, TESTS)
+                run_camera_test_flow(runner, args, TESTS)
                 success = True
             except Exception as e:
                 logger.exception(e)  # 把 完整堆疊資訊 也記錄到 log 中，方便分析

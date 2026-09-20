@@ -3,18 +3,18 @@ from __future__ import annotations
 import json
 import re
 import sys
-from pathlib import Path
 import time
-from typing import Optional
 from enum import Enum
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]  # /home/h/lineageos/device/sony/SemcCameraUI
 TEST_CAMERA_DIR = Path(__file__).resolve().parent  # /SemcCameraUI/test_camera
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(TEST_CAMERA_DIR))
 
-from tools_Common.adb import Adb  # noqa: E402
-from key import ClickTarget  # noqa: E402
+from key import ClickTarget
+
+from tools_Common.adb import Adb
 
 
 class Field(Enum):
@@ -356,17 +356,17 @@ def _broadcast(
     adb: Adb,
     *,
     cmd: str,
-    rid: Optional[str] = None,
-    text: Optional[str] = None,
-    desc: Optional[str] = None,
-    timeout_ms: Optional[int] = None,
-    pick: Optional[str] = None,
-    index: Optional[int] = None,
-    x1: Optional[int] = None,
-    y1: Optional[int] = None,
-    x2: Optional[int] = None,
-    y2: Optional[int] = None,
-    duration_ms: Optional[int] = None,
+    rid: str | None = None,
+    text: str | None = None,
+    desc: str | None = None,
+    timeout_ms: int | None = None,
+    pick: str | None = None,
+    index: int | None = None,
+    x1: int | None = None,
+    y1: int | None = None,
+    x2: int | None = None,
+    y2: int | None = None,
+    duration_ms: int | None = None,
 ) -> dict:
     """使用 adb shell am broadcast 呼叫 UiAgentService（純 UiAgent 方案）。
 
@@ -564,7 +564,7 @@ def field_by_rid(
     field: Field,
     timeout_ms: int = TIMEOUT,
     raise_on_fail: bool = True,
-) -> Optional[str]:
+) -> str | None:
     matches = []
     rid_value = rid.rid.strip()
     deadline = time.monotonic() + timeout_ms / 1000
