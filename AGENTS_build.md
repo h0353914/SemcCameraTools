@@ -47,11 +47,11 @@ export USE_CCACHE=1
 
 # 3.1 全系統編譯指令（正確版）
 
-`lunch` 的 product 是 `lineage_poplardcm`，release 是 `bp1a`：
+`lunch` 的 product 是 `lineage_xxxxxxxxx`，release 是 `bp1a`：
 
 ```bash
 . build/envsetup.sh
-lunch lineage_poplardcm-bp1a-userdebug
+lunch lineage_xxxxxxxxx-bp1a-userdebug
 make bacon -j10
 ```
 
@@ -73,7 +73,7 @@ environment variables changed value:
 `"舊值" -> "新值"` 這個箭頭格式，代表 Soong 偵測到跟**上一次呼叫**用的環境變數/`lunch` 設定不一樣（例如 `TARGET_RELEASE` 這次是 `bp1a`、上次卻是 `ap4a`），於是整個 `out/soong` 判定快取失效，觸發全樹重新分析（`soong_build` 會吃到滿記憶體、跑上好幾分鐘，不是單純重編那一兩個模組而已）。
 
 **看到這個輸出就代表這次或上一次的指令下錯了**，通常是：
-- `lunch` 打的不是 3.1 節那個 `lineage_poplardcm-bp1a-userdebug`（release 打成別的，例如 `ap4a`）
+- `lunch` 打的不是 3.1 節那個 `lineage_xxxxxxxxx-bp1a-userdebug`（release 打成別的，例如 `ap4a`）
 - 忘記在 `source build/envsetup.sh && lunch ...` 之前就 export 好 `CCACHE_EXEC=/usr/bin/ccache` 跟 `USE_CCACHE=1`
 
 看到就要停下來，照第 3.1 節的指令重下一次，不要讓它在錯的設定上繼續編下去（編出來的產物設定也會是錯的）。
@@ -85,3 +85,31 @@ environment variables changed value:
 ```bash
 ccache -s
 ```
+
+# 6. 刷機：一律用 `adb shell twrp install`
+
+編譯完成的 ROM zip（`out/target/product/<device>/lineage-*.zip`）一律用 TWRP 的 `twrp install` 指令安裝，**不再用** `twrp sideload` + `adb sideload`（sideload 要先等裝置進入 sideload 模式，常因時機問題第一次失敗，而且傳完後裝置會從 adb 消失、看不到安裝結果）。
+
+adb 一律用 `/mnt/f/Android/platform-tools/adb.exe`；同時接多台裝置時每個指令都要加 `-s <序號>`。
+
+```bash
+ADB="/mnt/f/Android/platform-tools/adb.exe -s <序號>"
+ZIP=~/lineageos/out/target/product/poplardcm/lineage-22.2-<日期>-UNOFFICIAL-poplardcm.zip
+
+$ADB reboot recovery
+$ADB wait-for-recovery
+
+# 1. 把 zip 推到手機儲存空間（Windows 版 adb 要用 wslpath -w 轉路徑）
+$ADB push "$(wslpath -w $ZIP)" /sdcard/rom.zip
+
+# 2. 用 twrp 安裝
+$ADB shell twrp install /sdcard/rom.zip
+
+# 3. 安裝完成後重開機
+$ADB reboot
+```
+
+* 安裝結果以 `twrp install` 的輸出為準（要看到成功訊息才算完成）。
+* 刷完不用清資料；資料分區保留。
+* 刷完後用 `adb shell getprop ro.lineage.version` 確認版本是剛編的那一版。
+* 推到手機的 `/sdcard/rom.zip` 用完要刪：`$ADB shell rm /sdcard/rom.zip`。
